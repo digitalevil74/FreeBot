@@ -4,9 +4,6 @@ import argparse, sys, os, re
 import requests, subprocess
 from pathlib import Path
 
-from docutils.nodes import field_name
-
-
 def main():
 
     # Parser
