@@ -50,10 +50,11 @@ def main():
     print("Video file found:\n")
     filename = files[0].name
     print(filename)
-    m = re.search(r"\d{4}", filename)
+    m = re.search(r"(?:\((\d{4})\)|(?<!\d)(\d{4})(?!\d))", filename)
     if m:
-        print(f"Year found on filename:{m.group()}")
-        year = m.group()
+        year = m.group(1) or m.group(2)
+        print(f"Year found on filename:{year}")
+        #year = m.group()
     else:
         print("Year not found on filename")
 
@@ -62,14 +63,25 @@ def main():
     ## Get Duration
     out = subprocess.run(
         ["ffprobe", "-v", "error",
+         "-select_streams", "v:0",
+         "-show_entries", "stream=height,field_order",
          "-show_entries", "format=duration",
-         "-of", "default=nw=1:nk=1",
+         "-of", "csv=p=0",
          files[0]],
         capture_output=True,
         text=True
     )
-    runtime = float(out.stdout.strip()) / 60
+    lines = out.stdout.strip().splitlines()
+    height, field = lines[0].split(",")
+    runtime = float(lines[1]) / 60
+
+    #height, field, runtime = out.stdout.strip().split(",")
+    #runtime = float(runtime) / 60
     print(f"Runtime extracted: {runtime}")
+    if field == "progressive":
+        print(f"Resolution: {height}p")
+    else:
+        print(f"Resolution: {height}i")
 
     ## TMDB stuff
     ACCESS_TOKEN = os.environ.get("TMDB")
