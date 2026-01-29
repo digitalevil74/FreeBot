@@ -1,6 +1,6 @@
 ## FreeBot
 
-import argparse, sys, os, re
+import argparse, sys, os, re, string
 import requests, subprocess
 from pathlib import Path
 
@@ -26,7 +26,13 @@ def main():
     parser.add_argument(
         "-o", "--output",
         type=str,
-        help="Define destination path to rename")
+        help="Define destination path to rename, optional")
+
+    parser.add_argument(
+        "-mf", "--movieformat",
+        type=str,
+        default="{n} ({y}) [tbdbid-{id}] [{res}] [{run} mins]",
+        help="Define naming format, optional")
 
     parser.add_argument(
         "-m", "--mode",
@@ -37,6 +43,24 @@ def main():
 
     # Parse the arguments
     args = parser.parse_args()
+
+    ## check format
+    context ={
+        "id": None,
+        "y": None,
+        "n": None,
+        "res": None,
+        "run": None
+    }
+    formatter = string.Formatter()
+    try:
+        keys = {fname for _, fname, _, _ in formatter.parse(args.movieformat) if fname}
+        missing = keys - context.keys()
+        if missing:
+            sys.exit(f"Movie Format not recognized: {', '.join(missing)}")
+    except ValueError as e:
+        sys.exit(f"Bad format: {e}")
+
 
     ## Get all files in the path
     path = Path(args.input)
@@ -49,18 +73,19 @@ def main():
 
     print("Video file found:\n")
     filename = files[0].name
+    ext = files[0].suffix
     print(filename)
     m = re.search(r"(?:\((\d{4})\)|(?<!\d)(\d{4})(?!\d))", filename)
     if m:
         year = m.group(1) or m.group(2)
         print(f"Year found on filename:{year}")
-        #year = m.group()
     else:
         print("Year not found on filename")
 
     movie_name = filename[:m.start()-1]
     print(f"File to probe: {files[0]}")
-    ## Get Duration
+
+    ## Get Runtime, Resolution
     out = subprocess.run(
         ["ffprobe", "-v", "error",
          "-select_streams", "v:0",
@@ -75,13 +100,12 @@ def main():
     height, field = lines[0].split(",")
     runtime = float(lines[1]) / 60
 
-    #height, field, runtime = out.stdout.strip().split(",")
-    #runtime = float(runtime) / 60
     print(f"Runtime extracted: {runtime}")
     if field == "progressive":
-        print(f"Resolution: {height}p")
+        height = str(height)+"p"
     else:
-        print(f"Resolution: {height}i")
+        height = str(height)+"i"
+    print(f"Resolution: {height}")
 
     ## TMDB stuff
     ACCESS_TOKEN = os.environ.get("TMDB")
@@ -109,9 +133,11 @@ def main():
     for n in data["results"]:
         print(n["release_date"], n["original_title"], n["vote_average"], n["vote_count"])
 
-    movie_id = data["results"][0]["id"]
+    tmdb_id = data["results"][0]["id"]
+    tmdb_title = data["results"][0]["original_title"]
+    tmdb_year = data["results"][0]["release_date"][:4]
 
-    movie_details = f"https://api.themoviedb.org/3/movie/{movie_id}"
+    movie_details = f"https://api.themoviedb.org/3/movie/{tmdb_id}"
     response = requests.get(movie_details, headers=headers)
     print(response.status_code)
     details = (response.json())
@@ -124,5 +150,37 @@ def main():
     else:
         print("Not Match")
 
+    ## Renaming
+    context ={
+        "id": tmdb_id,
+        "y": tmdb_year,
+        "n": tmdb_title,
+        "res": height,
+        "run": int(runtime)
+    }
+
+    print(f"Format: {args.movieformat.format(**context)}")
+    dest_name = args.movieformat.format(**context) + ext
+
+    if args.mode is not None:
+        op = input("Mode not specified: Test, Rename, Copy, Move, Hardlink, Softlink")
+    else:
+        op = args.mode
+
+    if op in("t", "test"):
+        pass
+    elif op in("h", "hardlink"):
+        if args.output is None:
+            dest_path = args.input
+        else:
+            dest_path = args.output
+        dest_file = Path(dest_path) / dest_name
+        confirm = input(f"Will hardlink {files[0]} to {dest_file}, confirm? y/n")
+        if confirm in("y", "Y"):
+            Path(dest_path).mkdir(parents=True, exist_ok=True)
+            #Path(dest_file).hardlink_to(files[0])
+            os.link(files[0], dest_file)
+        else:
+            sys.exit()
 if __name__ == "__main__":
     main()
